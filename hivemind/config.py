@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # === ENDEE CONFIGURATION ===
-ENDEE_HOST = os.getenv("ENDEE_HOST", "http://localhost:8080")
+ENDEE_HOST = os.getenv("ENDEE_HOST", "https://didactic-space-adventure-rq7vqw449pphpw9p-8080.app.github.dev")
 ENDEE_AUTH_TOKEN = os.getenv("ENDEE_AUTH_TOKEN", "")
 
 # INDEX NAMES
@@ -56,12 +56,15 @@ PAPERS_JSON = PROCESSED_DIR / "papers.json"
 CHUNKS_JSON = PROCESSED_DIR / "chunks.json"
 EMBEDDINGS_NPY = PROCESSED_DIR / "embeddings.npy"
 SPARSE_VECTORS_JSON = PROCESSED_DIR / "sparse_vectors.json"
+VOCABULARY_PATH = PROCESSED_DIR / "vocabulary.json"
 
 # === ARXIV FETCH CONFIG ===
 ARXIV_CATEGORIES = ["cs.LG", "cs.CL", "cs.CV", "cs.AI"]
 PAPERS_PER_CATEGORY = 2500
 YEAR_MIN = 2019
 YEAR_MAX = 2026
+ARXIV_YEAR_START = 2019
+ARXIV_YEAR_END = 2024
 ARXIV_DELAY_SECONDS = 10
 
 # === EVALUATION ===
@@ -78,7 +81,7 @@ DEFAULT_BOOST_PERCENTAGE = 10
 
 # === BATCH SIZES ===
 EMBED_BATCH_SIZE = 128
-INSERT_BATCH_SIZE = 500
+INSERT_BATCH_SIZE = 100
 
 # === VALIDATION ===
 def validate_config():

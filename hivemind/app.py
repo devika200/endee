@@ -172,22 +172,58 @@ def page_search():
             return
         
         # Show router decision
-        with st.expander("🧭 Query Routing Analysis", expanded=True):
+        with st.expander("🧭 Query Router Decision", expanded=True):
             routing_result = st.session_state.searcher.router.classify_query(query)
             
+            # Basic metrics
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Query Type", routing_result.query_type)
             with col2:
-                st.metric("Dense Weight", f"{routing_result.dense_weight:.1f}")
+                st.metric("Dense Weight", f"{routing_result.dense_weight:.2f}")
             with col3:
-                st.metric("Sparse Weight", f"{routing_result.sparse_weight:.1f}")
+                st.metric("Sparse Weight", f"{routing_result.sparse_weight:.2f}")
             
+            # Advanced metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Specificity (z-score)", f"{routing_result.specificity:.2f}")
+            with col2:
+                st.metric("Confidence", f"{routing_result.confidence:.2f}")
+            with col3:
+                st.metric("Avg Query IDF", f"{routing_result.avg_query_idf:.2f}")
+            with col4:
+                corpus_avg = st.session_state.searcher.router.corpus_stats.avg_idf
+                st.metric("Corpus Avg IDF", f"{corpus_avg:.2f}")
+            
+            # Weight visualization
+            st.write("**Weight Distribution:**")
+            weight_col1, weight_col2 = st.columns(2)
+            with weight_col1:
+                st.progress(routing_result.dense_weight, text=f"Dense: {routing_result.dense_weight:.2f}")
+            with weight_col2:
+                st.progress(routing_result.sparse_weight, text=f"Sparse: {routing_result.sparse_weight:.2f}")
+            
+            # Filters
             if routing_result.filters:
-                st.write("Filters applied:")
+                st.write("**Filters Applied:**")
                 for filter_dict in routing_result.filters:
                     for field, condition in filter_dict.items():
                         st.code(f"{field}: {condition}")
+            
+            # Explanation
+            with st.expander("📖 Detailed Explanation", expanded=False):
+                st.write(routing_result.explanation)
+                
+                # Corpus stats
+                st.write("**Corpus Statistics:**")
+                stats = st.session_state.searcher.router.corpus_stats
+                st.write(f"- Vocabulary Size: {len(stats.idf_scores):,}")
+                st.write(f"- Average IDF: {stats.avg_idf:.3f}")
+                st.write(f"- Max IDF: {stats.max_idf:.3f}")
+                st.write(f"- Min IDF: {stats.min_idf:.3f}")
+                st.write(f"- Std IDF: {stats.std_idf:.3f}")
+                st.write(f"- Total Documents: {stats.total_docs:,}")
         
         # Perform search
         with st.spinner("🔍 Searching knowledge base..."):

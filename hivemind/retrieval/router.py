@@ -1,208 +1,329 @@
 """
-Query Router: classify queries into types and determine search parameters
-KEYWORD, CONCEPTUAL, TEMPORAL, HYBRID: weights + filters
+Query Router: corpus-aware IDF-based weight calculation for hybrid search
+Grounded in Mandikal et al. 2024, Mala et al. 2025, and Hsu & Tzeng 2025
 """
 
 import re
 import json
+import math
+import string
 import sys
+import os
 from pathlib import Path
-from typing import Dict, List, Tuple
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 
 # Add parent directory to path for config import
 sys.path.append(str(Path(__file__).parent.parent))
-from config import DEFAULT_PREFILTER_THRESHOLD, DEFAULT_BOOST_PERCENTAGE
+from config import VOCABULARY_PATH, ARXIV_YEAR_START, ARXIV_YEAR_END, TOP_K_RETRIEVAL
 
 @dataclass
 class RouterResult:
-    """Result of query routing"""
-    query_type: str
-    dense_weight: float
-    sparse_weight: float
-    filters: List[Dict]
-    confidence: float
+    """Result of query routing with corpus-aware weights"""
+    query_type: str        # KEYWORD / CONCEPTUAL / HYBRID
+    dense_weight: float    
+    sparse_weight: float   
+    filters: List[Dict]    
+    confidence: float      
+    avg_query_idf: float   
+    specificity: float     # z-score
+    explanation: str       # human readable for Streamlit UI
+
+@dataclass  
+class CorpusStats:
+    """Corpus statistics loaded from vocabulary.json"""
+    idf_scores: Dict[str, float]
+    avg_idf: float
+    max_idf: float
+    min_idf: float
+    std_idf: float
+    total_docs: int
 
 class QueryRouter:
-    """Routes queries to optimal search configuration"""
+    """Corpus-aware query router using IDF-based weight calculation"""
     
-    def __init__(self):
-        # Keyword patterns for technical terms
+    # Weight boundaries grounded in Mandikal et al. 2024
+    DENSE_MAX  = 0.70
+    DENSE_MIN  = 0.30
+    SPARSE_MAX = 0.70
+    SPARSE_MIN = 0.30
+    
+    def __init__(self, vocabulary_path: str = None):
+        """Initialize router with corpus statistics"""
+        self.vocab_path = vocabulary_path or VOCABULARY_PATH
+        self.corpus_stats = self._load_corpus_stats(self.vocab_path)
+        self._compile_patterns()
+        
+        # Download NLTK data if needed
+        try:
+            stopwords.words('english')
+        except LookupError:
+            nltk.download('stopwords')
+        try:
+            word_tokenize('test')
+        except LookupError:
+            nltk.download('punkt')
+    
+    def _load_corpus_stats(self, path: str) -> CorpusStats:
+        """Load corpus statistics from vocabulary.json"""
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                vocab_data = json.load(f)
+            
+            return CorpusStats(
+                idf_scores=vocab_data.get('idf_scores', {}),
+                avg_idf=vocab_data.get('avg_idf', 5.0),
+                max_idf=vocab_data.get('max_idf', 10.0),
+                min_idf=vocab_data.get('min_idf', 1.0),
+                std_idf=vocab_data.get('std_idf', 2.0),
+                total_docs=vocab_data.get('total_docs', 10000)
+            )
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"WARNING: Could not load vocabulary from {path}: {e}")
+            print("Using fallback corpus statistics")
+            return CorpusStats(
+                idf_scores={},
+                avg_idf=5.0,
+                max_idf=10.0,
+                min_idf=1.0,
+                std_idf=2.0,
+                total_docs=10000
+            )
+    
+    def _compile_patterns(self):
+        """Pre-compile regex patterns for efficiency"""
+        # Model name patterns for boost
         self.model_patterns = [
-            r'\b(BERT|GPT|LLaMA|T5|ViT|ResNet|Transformer|LSTM|GRU|RNN|CNN|SVM|RF|XGBoost)\b',
-            r'\b(LoRA|QLoRA|AdaLoRA|Adapter|Prefix-tuning|Prompt-tuning)\b',
-            r'\b(Adam|SGD|RMSprop|AdaGrad|AdamW)\b',
-            r'\b(ReLU|GELU|Swish|Sigmoid|Tanh|Softmax)\b',
-            r'\b(Attention|Self-attention|Multi-head|Cross-attention)\b',
-            r'\b(Embedding|Word2Vec|GloVe|FastText|BERT|RoBERTa)\b'
+            r'\bBERT\b', r'\bGPT\b', r'\bLLaMA\b', r'\bMistral\b',
+            r'\bLoRA\b', r'\bQLoRA\b', r'\bRLHF\b', r'\bT5\b',
+            r'\bViT\b', r'\bResNet\b', r'\bTransformer\b', r'\bAttention\b'
         ]
+        self.model_regex = re.compile('|'.join(self.model_patterns), re.IGNORECASE)
         
-        # Conceptual patterns
-        self.conceptual_patterns = [
-            r'\b(why|how|what is|explain|describe|compare|relationship between)\b',
-            r'\b(advantage|disadvantage|pro|con|benefit|drawback)\b',
-            r'\b(principle|theory|concept|idea|approach|methodology)\b'
-        ]
-        
-        # Temporal patterns
-        self.temporal_patterns = [
-            r'\b(20\d{2})\b',  # Years 2000-2099
-            r'\b(recent|latest|current|state-of-the-art|SOTA)\b',
-            r'\b(new|emerging|trending|breakthrough)\b',
-            r'\b(last|past|previous|earlier)\b'
-        ]
+        # Temporal patterns (DISABLED - all papers from 2026)
+        # self.year_pattern = re.compile(r'\b(19|20)\d{2}\b')
+        # self.temporal_words = re.compile(r'\b(recent|latest|new|current|modern|state-of-the-art|SOTA)\b', re.IGNORECASE)
         
         # Category patterns
         self.category_patterns = {
-            'cs.LG': r'\b(machine learning|ML|deep learning|neural network|AI)\b',
-            'cs.CL': r'\b(NLP|natural language|text|language|translation|sentiment)\b',
-            'cs.CV': r'\b(computer vision|image|visual|object detection|segmentation)\b',
-            'cs.AI': r'\b(artificial intelligence|AI|reasoning|planning|knowledge)\b'
+            'cs.CL': [r'\bNLP\b', r'\bnatural language\b', r'\bmachine translation\b', r'\bsentiment\b'],
+            'cs.CV': [r'\bcomputer vision\b', r'\bimage\b', r'\bvision\b', r'\bdetection\b', r'\bsegmentation\b'],
+            'cs.LG': [r'\bmachine learning\b', r'\blearning\b', r'\bneural network\b', r'\bdeep learning\b'],
+            'cs.AI': [r'\bartificial intelligence\b', r'\bAI\b', r'\bagent\b', r'\breinforcement learning\b']
+        }
+        self.category_regex = {
+            cat: re.compile('|'.join(patterns), re.IGNORECASE)
+            for cat, patterns in self.category_patterns.items()
         }
     
-    def classify_query(self, query: str) -> RouterResult:
-        """Classify query and return routing parameters"""
-        query_lower = query.lower()
+    def _preprocess(self, text: str) -> List[str]:
+        """Preprocess text identically to sparse.py"""
+        # Convert to lowercase
+        text = text.lower()
         
-        # Initialize scores
-        keyword_score = 0
-        conceptual_score = 0
-        temporal_score = 0
+        # Remove punctuation and special characters
+        text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
         
-        # Check keyword patterns
-        for pattern in self.model_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                keyword_score += 1
+        # Tokenize
+        tokens = word_tokenize(text)
         
-        # Check conceptual patterns
-        for pattern in self.conceptual_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                conceptual_score += 1
+        # Remove stopwords and short tokens
+        stop_words = set(stopwords.words('english'))
+        tokens = [token for token in tokens if token not in stop_words and len(token) > 2]
         
-        # Check temporal patterns
-        for pattern in self.temporal_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                temporal_score += 1
+        return tokens
+    
+    def _compute_avg_idf(self, tokens: List[str]) -> float:
+        """Compute average IDF of query tokens"""
+        if not tokens:
+            return self.corpus_stats.avg_idf
         
-        # Determine query type
-        scores = {
-            'KEYWORD': keyword_score,
-            'CONCEPTUAL': conceptual_score,
-            'TEMPORAL': temporal_score
-        }
+        idf_sum = 0.0
+        for token in tokens:
+            # Use actual IDF if known, corpus average if unknown
+            idf_sum += self.corpus_stats.idf_scores.get(token, self.corpus_stats.avg_idf)
         
-        query_type = max(scores, key=scores.get)
-        max_score = scores[query_type]
+        return idf_sum / len(tokens)
+    
+    def _idf_to_sparse_weight(self, avg_idf: float) -> float:
+        """Convert average IDF to sparse weight using z-score normalization"""
+        # Compute z-score normalization (corpus-relative)
+        z = (avg_idf - self.corpus_stats.avg_idf) / (self.corpus_stats.std_idf + 1e-8)
         
-        # If no strong signals, default to HYBRID
-        if max_score == 0:
-            query_type = 'HYBRID'
-            confidence = 0.5
+        # Map z-score to sparse weight
+        sparse_weight = 0.5 + (z * 0.1)
+        
+        # Clip to valid range
+        sparse_weight = max(self.SPARSE_MIN, min(self.SPARSE_MAX, sparse_weight))
+        
+        return sparse_weight
+    
+    def _apply_model_pattern_boost(self, query: str, sparse_weight: float) -> float:
+        """Apply boost for known model name patterns"""
+        matches = len(self.model_regex.findall(query))
+        boost = min(matches * 0.03, 0.09)  # Max +0.09 boost
+        
+        boosted_weight = sparse_weight + boost
+        return min(self.SPARSE_MAX, boosted_weight)
+    
+    def _extract_year_filter(self, query: str) -> Optional[Dict]:
+        """Extract year range filter from temporal patterns"""
+        # DISABLED: All papers are from 2026, year filtering provides no value
+        return None
+    
+    def _extract_category_filters(self, query: str) -> List[Dict]:
+        """Extract category filters from query"""
+        matching_categories = []
+        
+        for cat, regex in self.category_regex.items():
+            if regex.search(query):
+                matching_categories.append(cat)
+        
+        if not matching_categories:
+            return []
+        
+        if len(matching_categories) == 1:
+            return [{"category": {"$eq": matching_categories[0]}}]
         else:
-            confidence = min(max_score / 3.0, 1.0)  # Normalize to 0-1
+            return [{"category": {"$in": matching_categories}}]
+    
+    def _determine_query_type(self, sparse_weight: float, dense_weight: float) -> str:
+        """Determine query type label for display"""
+        if sparse_weight >= 0.60:
+            return "KEYWORD"
+        elif dense_weight >= 0.60:
+            return "CONCEPTUAL"
+        else:
+            return "HYBRID"
+    
+    def _build_explanation(self, query: str, avg_query_idf: float, specificity: float, 
+                          sparse_weight: float, dense_weight: float, filters: List[Dict]) -> str:
+        """Build human-readable explanation"""
+        parts = []
         
-        # Determine weights based on type
-        if query_type == 'KEYWORD':
-            dense_weight = 0.3
-            sparse_weight = 0.7
-        elif query_type == 'CONCEPTUAL':
-            dense_weight = 0.8
-            sparse_weight = 0.2
-        elif query_type == 'TEMPORAL':
-            dense_weight = 0.5
-            sparse_weight = 0.5
-        else:  # HYBRID
-            dense_weight = 0.5
-            sparse_weight = 0.5
+        # Explain specificity
+        if specificity > 0.5:
+            parts.append(f"Query contains rare terms (avg IDF: {avg_query_idf:.2f}) -> favoring sparse search")
+        elif specificity < -0.5:
+            parts.append(f"Query contains common terms (avg IDF: {avg_query_idf:.2f}) -> favoring dense search")
+        else:
+            parts.append(f"Query has average term specificity (avg IDF: {avg_query_idf:.2f}) -> balanced search")
         
-        # Generate filters
+        # Explain model boost
+        if self.model_regex.search(query):
+            parts.append("Model name patterns detected -> boosted sparse weight")
+        
+        # Explain filters
+        if filters:
+            filter_types = []
+            for f in filters:
+                if "category" in f:
+                    filter_types.append("category filter")
+            parts.append(f"Applied: {', '.join(filter_types)}")
+        
+        return " | ".join(parts)
+    
+    def classify_query(self, query: str) -> RouterResult:
+        """Classify query and compute corpus-aware weights"""
+        # Preprocess query
+        tokens = self._preprocess(query)
+        
+        # Compute average IDF
+        avg_query_idf = self._compute_avg_idf(tokens)
+        
+        # Compute specificity (z-score)
+        specificity = (avg_query_idf - self.corpus_stats.avg_idf) / (self.corpus_stats.std_idf + 1e-8)
+        
+        # Convert to sparse weight
+        sparse_weight = self._idf_to_sparse_weight(avg_query_idf)
+        
+        # Apply model pattern boost
+        sparse_weight = self._apply_model_pattern_boost(query, sparse_weight)
+        
+        # Compute dense weight
+        dense_weight = 1.0 - sparse_weight
+        
+        # Extract filters
         filters = []
         
-        # Temporal filters
-        if query_type == 'TEMPORAL':
-            year_filter = self._extract_year_filter(query)
-            if year_filter:
-                filters.append(year_filter)
+        # Temporal filters (year only, no weight change)
+        year_filter = self._extract_year_filter(query)
+        if year_filter:
+            filters.append(year_filter)
         
-        # Category filters
-        category_filter = self._extract_category_filter(query)
-        if category_filter:
-            filters.append(category_filter)
+        # Category filters (no weight change)
+        category_filters = self._extract_category_filters(query)
+        filters.extend(category_filters)
+        
+        # Determine query type
+        query_type = self._determine_query_type(sparse_weight, dense_weight)
+        
+        # Compute confidence
+        deviation = abs(sparse_weight - 0.5)
+        confidence = min(deviation / 0.2, 1.0)
+        
+        # Build explanation
+        explanation = self._build_explanation(query, avg_query_idf, specificity, 
+                                            sparse_weight, dense_weight, filters)
         
         return RouterResult(
             query_type=query_type,
             dense_weight=dense_weight,
             sparse_weight=sparse_weight,
             filters=filters,
-            confidence=confidence
+            confidence=confidence,
+            avg_query_idf=avg_query_idf,
+            specificity=specificity,
+            explanation=explanation
         )
     
-    def _extract_year_filter(self, query: str) -> Dict:
-        """Extract year range filter from query"""
-        # Find all years in the query
-        years = re.findall(r'\b(20\d{2})\b', query)
-        
-        if not years:
-            # Check for temporal keywords
-            if any(word in query.lower() for word in ['recent', 'latest', 'current', 'new', 'emerging']):
-                current_year = 2024  # Could make this dynamic
-                return {"year": {"$gte": current_year - 2, "$lte": current_year}}
-            elif any(word in query.lower() for word in ['past', 'previous', 'earlier']):
-                return {"year": {"$lte": 2020}}
-            return None
-        
-        # If specific years mentioned, create range around them
-        years = [int(year) for year in years]
-        min_year, max_year = min(years), max(years)
-        
-        # Add +/- 1 year buffer
-        return {"year": {"$gte": max(2019, min_year - 1), "$lte": min(2024, max_year + 1)}}
-    
-    def _extract_category_filter(self, query: str) -> Dict:
-        """Extract category filter from query"""
-        query_lower = query.lower()
-        
-        for category, pattern in self.category_patterns.items():
-            if re.search(pattern, query, re.IGNORECASE):
-                return {"category": {"$eq": category}}
-        
-        return None
-    
-    def explain_routing(self, query: str, result: RouterResult) -> str:
-        """Generate explanation of routing decision"""
-        explanation = f"Query type: {result.query_type} (confidence: {result.confidence:.2f})\n"
-        explanation += f"Weights: dense={result.dense_weight:.1f}, sparse={result.sparse_weight:.1f}\n"
-        
-        if result.filters:
-            explanation += f"Filters: {len(result.filters)} applied\n"
-            for filter_dict in result.filters:
-                for field, condition in filter_dict.items():
-                    explanation += f"  - {field}: {condition}\n"
-        else:
-            explanation += "No filters applied\n"
-        
-        return explanation
+    def explain_routing(self, query: str) -> str:
+        """Convenience method for Streamlit to get explanation"""
+        result = self.classify_query(query)
+        return result.explanation
 
 def main():
-    """Test the query router"""
-    router = QueryRouter()
-    
-    test_queries = [
-        "What is the relationship between attention mechanisms and transformer models?",
-        "BERT vs GPT-4 performance comparison 2023",
-        "How does LoRA fine-tuning work?",
-        "Recent advances in computer vision object detection",
-        "Explain the advantages of Adam optimizer over SGD",
-        "2022 NLP sentiment analysis techniques"
-    ]
-    
-    print("Testing Query Router")
+    """Test the query router with various query types"""
+    print("Testing Corpus-Aware Query Router")
     print("=" * 60)
     
-    for query in test_queries:
+    router = QueryRouter()
+    
+    # Print corpus stats
+    print(f"Corpus Statistics:")
+    print(f"   Vocabulary size: {len(router.corpus_stats.idf_scores)}")
+    print(f"   Average IDF: {router.corpus_stats.avg_idf:.3f}")
+    print(f"   Max IDF: {router.corpus_stats.max_idf:.3f}")
+    print(f"   Min IDF: {router.corpus_stats.min_idf:.3f}")
+    print(f"   Std IDF: {router.corpus_stats.std_idf:.3f}")
+    print(f"   Total documents: {router.corpus_stats.total_docs}")
+    print()
+    
+    # Test queries
+    test_queries = [
+        ("LoRA QLoRA fine-tuning memory efficiency", "KEYWORD"),
+        ("How do neural networks learn representations?", "CONCEPTUAL"),
+        ("Recent advances in diffusion models", "HYBRID"),
+        ("NLP sentiment analysis techniques", "CATEGORY"),
+        ("BERT vs GPT performance comparison", "KEYWORD_BOOST"),
+        ("What are the benefits of self-supervised learning?", "CONCEPTUAL")
+    ]
+    
+    for query, expected_type in test_queries:
         result = router.classify_query(query)
-        print(f"\nQuery: {query}")
-        print(router.explain_routing(query, result))
+        
+        print(f"Query: {query}")
+        print(f"  Type: {result.query_type} (expected: {expected_type})")
+        print(f"  Dense: {result.dense_weight:.3f}, Sparse: {result.sparse_weight:.3f}")
+        print(f"  Specificity (z-score): {result.specificity:.2f}")
+        print(f"  Avg Query IDF: {result.avg_query_idf:.2f} vs Corpus: {router.corpus_stats.avg_idf:.2f}")
+        print(f"  Confidence: {result.confidence:.2f}")
+        if result.filters:
+            print(f"  Filters: {result.filters}")
+        print(f"  Explanation: {result.explanation}")
         print("-" * 40)
 
 if __name__ == "__main__":

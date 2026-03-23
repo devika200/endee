@@ -71,6 +71,10 @@ logs/
 *.swp
 .cache/
 
+# Diagnostic scripts
+check_indexes.py
+diagnose_404.py
+
 # OS
 Thumbs.db
 .DS_Store

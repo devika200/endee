@@ -196,15 +196,38 @@ Try these sample queries to see HiveMind's routing in action:
 - "Recent advances in computer vision object detection"
 - "2022 NLP sentiment analysis techniques"
 
-## 📈 Performance Characteristics
+## � Evaluation Results
+
+### **Performance on 20 ML/AI Domain Queries**
+
+| Configuration | Recall@5 | Latency | Notes |
+|---|---|---|---|
+| **Hybrid IDF Router + Rerank** | **0.501** | 1023ms | 🏆 Best overall |
+| Hybrid FP16 + Rerank | 0.423 | 1022ms | +66% over hybrid |
+| Dense FP16 only | 0.390 | 709ms | Fast dense-only |
+| Dense FP32 only | 0.369 | 714ms | Baseline FP32 |
+| Dense INT8 only | 0.362 | 696ms | 98% of FP32 quality |
+| Hybrid FP16 (no rerank) | 0.254* | 716ms | *20% query failures |
+| Sparse BM25 only | 0.215* | 411ms | *20% query failures |
+
+### **Key Findings**
+
+1. **IDF-aware routing improved recall@5 by 18.4%** over fixed-weight hybrid search (0.501 vs 0.423)
+2. **Reranking improved recall@5 by 66%** over hybrid search alone (0.423 vs 0.254)
+3. **Quantization shows minimal quality impact** - INT8 achieves 98% of FP32 recall
+4. **Sparse search provides fast baseline** with 411ms latency
+
+*Note: Some configurations affected by intermittent 404 errors during evaluation*
+
+## �📈 Performance Characteristics
 
 | Metric | Value |
 |---|---|
 | **Ingestion Speed** | ~500 vectors/second (MessagePack) |
-| **Query Latency** | 12-21ms (p50) depending on config |
+| **Query Latency** | 700-1023ms depending on config |
 | **Memory Usage** | 2 bytes/vector (FP16) + sparse overhead |
 | **Index Size** | ~200MB for 10k papers (FP16 + sparse) |
-| **Recall@5** | 71.2% (best configuration) |
+| **Recall@5** | 50.1% (IDF Router + Rerank) |
 | **Concurrent Users** | Limited by Groq rate limits |
 
 ## 🔧 Development

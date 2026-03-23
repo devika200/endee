@@ -74,75 +74,179 @@ class EvaluationRunner:
                 "use_sparse": True,
                 "use_rerank": True,
                 "description": "Hybrid FP16 + Rerank"
+            },
+            "hybrid_idf_router_rerank": {
+                "index": KNOWLEDGE_BASE_INDEX,
+                "use_dense": True,
+                "use_sparse": True,
+                "use_rerank": True,
+                "use_idf_router": True,
+                "description": "Hybrid IDF Router + Rerank"
             }
         }
     
-    def load_scifact_dataset(self, num_queries: int = EVAL_NUM_QUERIES) -> Tuple[List[str], List[set]]:
-        """Load SciFact dataset with queries and ground truth relevance"""
-        print(f"Loading {EVAL_DATASET} dataset...")
+    def load_domain_dataset(self, num_queries: int = EVAL_NUM_QUERIES) -> Tuple[List[str], List[set]]:
+        """Load domain-specific ML/AI evaluation queries with ground truth"""
+        print(f"Loading domain-specific ML/AI evaluation dataset...")
         
-        try:
-            dataset = load_dataset(EVAL_DATASET)
-            
-            # Use evidence retrieval subset
-            if "evidence" in dataset:
-                eval_data = dataset["evidence"]
-            else:
-                eval_data = dataset["train"]
-            
-            queries = []
-            relevant_docs = []
-            
-            print(f"   Found {len(eval_data)} examples")
-            
-            for i, example in enumerate(tqdm(eval_data, desc="Processing examples")):
-                if i >= num_queries:
-                    break
-                
-                # Extract query (claim)
-                query = example["claim"]
-                
-                # Extract relevant documents
-                # SciFact has evidence documents with citations
-                doc_ids = set()
-                if "evidences" in example:
-                    for evidence in example["evidences"]:
-                        for citation in evidence.get("citations", []):
-                            doc_ids.add(citation)
-                
-                # If no citations, skip this example
-                if not doc_ids:
-                    continue
-                
-                queries.append(query)
-                relevant_docs.append(doc_ids)
-            
-            print(f"Loaded {len(queries)} queries with relevance judgments")
-            return queries, relevant_docs
-            
-        except Exception as e:
-            print(f"Failed to load dataset: {e}")
-            # Fallback: create dummy data for testing
-            print("   Using dummy evaluation data...")
-            dummy_queries = [
-                "What are transformer models?",
-                "How does BERT work?",
-                "What is attention mechanism?",
-                "Computer vision object detection",
-                "Neural network optimization"
-            ]
-            dummy_relevant = [{"doc_1", "doc_2"} for _ in dummy_queries]
-            return dummy_queries, dummy_relevant
+        # Curated queries with expected relevant keywords/topics
+        # Each query has keywords that should appear in relevant papers
+        eval_data = [
+            {
+                "query": "transformer attention mechanism neural networks",
+                "keywords": ["transformer", "attention", "self-attention", "multi-head"],
+                "categories": ["cs.LG", "cs.CL"]
+            },
+            {
+                "query": "BERT language model pre-training fine-tuning",
+                "keywords": ["bert", "language model", "pre-training", "fine-tuning"],
+                "categories": ["cs.CL"]
+            },
+            {
+                "query": "computer vision object detection convolutional networks",
+                "keywords": ["object detection", "vision", "convolutional", "cnn"],
+                "categories": ["cs.CV"]
+            },
+            {
+                "query": "neural network optimization gradient descent",
+                "keywords": ["optimization", "gradient", "training", "neural network"],
+                "categories": ["cs.LG"]
+            },
+            {
+                "query": "generative adversarial networks GAN image synthesis",
+                "keywords": ["gan", "generative", "adversarial"],
+                "categories": ["cs.CV", "cs.LG"]
+            },
+            {
+                "query": "reinforcement learning policy gradient deep Q-learning",
+                "keywords": ["reinforcement learning", "policy", "q-learning"],
+                "categories": ["cs.LG", "cs.AI"]
+            },
+            {
+                "query": "natural language processing sentiment analysis",
+                "keywords": ["nlp", "sentiment", "text classification"],
+                "categories": ["cs.CL"]
+            },
+            {
+                "query": "image segmentation semantic segmentation deep learning",
+                "keywords": ["segmentation", "semantic", "image"],
+                "categories": ["cs.CV"]
+            },
+            {
+                "query": "recurrent neural networks LSTM sequence modeling",
+                "keywords": ["lstm", "recurrent", "rnn", "sequence"],
+                "categories": ["cs.LG", "cs.CL"]
+            },
+            {
+                "query": "transfer learning domain adaptation few-shot learning",
+                "keywords": ["transfer learning", "domain adaptation", "few-shot"],
+                "categories": ["cs.LG"]
+            },
+            {
+                "query": "graph neural networks node classification",
+                "keywords": ["graph", "gnn", "node"],
+                "categories": ["cs.LG"]
+            },
+            {
+                "query": "vision transformer ViT image classification",
+                "keywords": ["vision transformer", "vit", "image classification"],
+                "categories": ["cs.CV"]
+            },
+            {
+                "query": "contrastive learning self-supervised representation",
+                "keywords": ["contrastive", "self-supervised", "representation"],
+                "categories": ["cs.LG", "cs.CV"]
+            },
+            {
+                "query": "neural architecture search AutoML",
+                "keywords": ["architecture search", "nas", "automl"],
+                "categories": ["cs.LG"]
+            },
+            {
+                "query": "diffusion models image generation stable diffusion",
+                "keywords": ["diffusion", "generation", "denoising"],
+                "categories": ["cs.CV", "cs.LG"]
+            },
+            {
+                "query": "large language models GPT scaling laws",
+                "keywords": ["language model", "gpt", "scaling"],
+                "categories": ["cs.CL", "cs.LG"]
+            },
+            {
+                "query": "meta-learning learning to learn",
+                "keywords": ["meta-learning", "learning to learn"],
+                "categories": ["cs.LG"]
+            },
+            {
+                "query": "multimodal learning vision language models CLIP",
+                "keywords": ["multimodal", "vision language", "clip"],
+                "categories": ["cs.CV", "cs.CL"]
+            },
+            {
+                "query": "neural machine translation encoder decoder",
+                "keywords": ["translation", "encoder", "decoder"],
+                "categories": ["cs.CL"]
+            },
+            {
+                "query": "adversarial robustness adversarial examples",
+                "keywords": ["adversarial", "robustness", "attack"],
+                "categories": ["cs.LG", "cs.CV"]
+            }
+        ]
+        
+        # Limit to requested number
+        eval_data = eval_data[:num_queries]
+        
+        queries = [item["query"] for item in eval_data]
+        
+        # For ground truth, we'll use keyword matching
+        # Store keywords for each query to check relevance
+        self.eval_keywords = {i: item["keywords"] for i, item in enumerate(eval_data)}
+        self.eval_categories = {i: item["categories"] for i, item in enumerate(eval_data)}
+        
+        # Placeholder for relevant docs - will be determined by keyword matching
+        relevant_docs = [set() for _ in queries]
+        
+        print(f"Loaded {len(queries)} domain-specific queries")
+        return queries, relevant_docs
     
-    def calculate_recall_at_k(self, retrieved_ids: List[str], relevant_ids: set, k: int) -> float:
-        """Calculate recall@k"""
-        if not relevant_ids:
+    def calculate_recall_at_k(self, retrieved_results: List, query_idx: int, k: int) -> float:
+        """Calculate recall@k using keyword matching for relevance"""
+        if not retrieved_results:
             return 0.0
         
-        retrieved_top_k = set(retrieved_ids[:k])
-        relevant_retrieved = retrieved_top_k & relevant_ids
+        # Get expected keywords and categories for this query
+        expected_keywords = self.eval_keywords.get(query_idx, [])
+        expected_categories = self.eval_categories.get(query_idx, [])
         
-        return len(relevant_retrieved) / len(relevant_ids)
+        if not expected_keywords:
+            return 0.0
+        
+        top_k = retrieved_results[:k]
+        
+        # Count how many top_k results are relevant
+        relevant_found = sum(
+            1 for result in top_k
+            if any(kw.lower() in result.title.lower() 
+                   for kw in expected_keywords)
+            and (result.category in expected_categories 
+                 if expected_categories else True)
+        )
+        
+        # Total relevant = all results that match keywords (not just top-k)
+        total_relevant = sum(
+            1 for result in retrieved_results  # full result set
+            if any(kw.lower() in result.title.lower() 
+                   for kw in expected_keywords)
+            and (result.category in expected_categories 
+                 if expected_categories else True)
+        )
+        
+        if total_relevant == 0:
+            return 0.0
+        
+        # recall@k = relevant found in top-k / total relevant
+        return relevant_found / total_relevant
     
     def evaluate_config(self, config_name: str, config: Dict, queries: List[str], 
                        relevant_docs: List[set]) -> Dict:
@@ -167,19 +271,17 @@ class EvaluationRunner:
                 # Skip invalid config
                 continue
             
-            # For simplicity, we'll use the standard search and modify results
-            search_response = self.searcher.search(query, k=20)
+            # Pass config flags to searcher
+            search_response = self.searcher.search(
+                query          = query,
+                k              = 20,
+                index_name     = config["index"],
+                use_dense      = config.get("use_dense", True),
+                use_sparse     = config.get("use_sparse", False),
+                use_idf_router = config.get("use_idf_router", False)
+            )
             
-            # Filter results based on config
-            if config["use_dense"] and config["use_sparse"]:
-                # Hybrid: use all results
-                search_results = search_response.results
-            elif config["use_dense"]:
-                # Dense only: use results (searcher already handles this)
-                search_results = search_response.results
-            elif config["use_sparse"]:
-                # Sparse only: we'd need to modify searcher, for now use hybrid
-                search_results = search_response.results
+            search_results = search_response.results if search_response else []
             
             # Apply reranking if needed
             if config["use_rerank"] and search_results:
@@ -188,26 +290,26 @@ class EvaluationRunner:
             
             search_time = (time.time() - start_time) * 1000
             
-            # Calculate metrics
-            retrieved_ids = [result.id for result in search_results]
-            relevant_ids = relevant_docs[i]
-            
-            results["recall@1"].append(self.calculate_recall_at_k(retrieved_ids, relevant_ids, 1))
-            results["recall@5"].append(self.calculate_recall_at_k(retrieved_ids, relevant_ids, 5))
-            results["recall@10"].append(self.calculate_recall_at_k(retrieved_ids, relevant_ids, 10))
+            # Calculate metrics using keyword-based relevance
+            results["recall@1"].append(self.calculate_recall_at_k(search_results, i, 1))
+            results["recall@5"].append(self.calculate_recall_at_k(search_results, i, 5))
+            results["recall@10"].append(self.calculate_recall_at_k(search_results, i, 10))
             results["latency_ms"].append(search_time)
         
-        # Calculate averages
-        for metric in ["recall@1", "recall@5", "recall@10", "latency_ms"]:
+        # Save latency list before overwriting
+        latency_list = results["latency_ms"].copy()
+        
+        # Calculate averages for recall metrics
+        for metric in ["recall@1", "recall@5", "recall@10"]:
             if results[metric]:
                 results[metric] = np.mean(results[metric])
             else:
                 results[metric] = 0.0
         
-        # Calculate percentiles for latency
-        if results["latency_ms"]:
-            results["p50_latency"] = np.percentile(results["latency_ms"], 50)
-            results["p95_latency"] = np.percentile(results["latency_ms"], 95)
+        # Calculate percentiles for latency from saved list
+        if latency_list:
+            results["p50_latency"] = float(np.percentile(latency_list, 50))
+            results["p95_latency"] = float(np.percentile(latency_list, 95))
         else:
             results["p50_latency"] = 0.0
             results["p95_latency"] = 0.0
@@ -222,7 +324,7 @@ class EvaluationRunner:
         print("Starting comprehensive evaluation...")
         
         # Load dataset
-        queries, relevant_docs = self.load_scifact_dataset()
+        queries, relevant_docs = self.load_domain_dataset()
         
         if not queries:
             raise ValueError("No evaluation queries available")

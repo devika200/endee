@@ -80,8 +80,17 @@ class EndeeSearcher:
         
         if vocab_file.exists():
             with open(vocab_file, 'r') as f:
-                vocab = json.load(f)
-            print(f"Loaded vocabulary: {len(vocab)} terms")
+                vocab_data = json.load(f)
+            
+            # Handle new nested format with idf_scores and word_to_id
+            if isinstance(vocab_data, dict) and "word_to_id" in vocab_data:
+                vocab = vocab_data["word_to_id"]
+                print(f"Loaded vocabulary: {len(vocab)} terms (nested format)")
+            else:
+                # Old flat format
+                vocab = vocab_data
+                print(f"Loaded vocabulary: {len(vocab)} terms (flat format)")
+            
             return vocab
         else:
             print("WARNING: Vocabulary file not found - sparse search disabled")
@@ -181,16 +190,15 @@ class EndeeSearcher:
         if filters:
             payload["filter"] = json.dumps(filters)
         
-        # Add weight parameters for hybrid search
+        # Add weight parameters based on search mode
         if dense_vector is not None and sparse_indices:
-            # For true hybrid search, Endee uses both vectors
-            pass  # Endee handles weighting internally
-        elif dense_vector is not None:
-            # Dense-only search
-            pass
-        elif sparse_indices:
-            # Sparse-only search (remove dense vector)
+            # Hybrid search: pass weights to Endee
+            payload["dense_weight"] = dense_weight
+            payload["sparse_weight"] = sparse_weight
+        elif dense_vector is None and sparse_indices:
+            # Sparse-only: remove dense fields from payload
             payload.pop("vector", None)
+            payload.pop("dense_weight", None)
         
         try:
             start_time = time.time()
@@ -253,17 +261,39 @@ class EndeeSearcher:
             return [], 0.0
     
     def search(self, query: str, k: int = TOP_K_RETRIEVAL, 
-               search_memory: bool = False) -> SearchResponse:
-        """Perform hybrid search"""
-        # Route the query
-        routing_result = self.router.classify_query(query)
+               search_memory: bool = False, index_name: str = None,
+               use_dense: bool = True, use_sparse: bool = True, 
+               use_idf_router: bool = False) -> SearchResponse:
+        """Perform hybrid search with configuration options"""
+        # Route the query (use IDF router if specified)
+        if use_idf_router:
+            routing_result = self.router.classify_query(query)
+        else:
+            # Fixed baseline - no corpus-aware routing
+            from retrieval.router import RouterResult
+            routing_result = RouterResult(
+                query_type="HYBRID",
+                dense_weight=0.5,
+                sparse_weight=0.5,
+                filters=[],
+                confidence=0.5,
+                avg_query_idf=0.0,
+                specificity=0.0,
+                explanation="Fixed 50/50 baseline weights"
+            )
         
-        # Generate embeddings
-        dense_vector = self._embed_query(query)
-        sparse_indices, sparse_values = self._generate_sparse_vector(query)
+        # Generate embeddings based on config
+        dense_vector = self._embed_query(query) if use_dense else None
+        sparse_indices, sparse_values = self._generate_sparse_vector(query) if use_sparse else ([], [])
         
         # Choose index
-        index_name = SESSION_MEMORY_INDEX if search_memory else KNOWLEDGE_BASE_INDEX
+        if index_name:
+            # Use provided index name
+            pass
+        elif search_memory:
+            index_name = SESSION_MEMORY_INDEX
+        else:
+            index_name = KNOWLEDGE_BASE_INDEX
         
         # Perform search
         start_time = time.time()

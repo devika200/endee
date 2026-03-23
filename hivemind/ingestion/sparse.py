@@ -154,12 +154,48 @@ def main():
     
     print(f"Saved {len(sparse_vectors)} sparse vectors to {SPARSE_VECTORS_JSON}")
     
-    # Save vocabulary for query processing
+    # Save vocabulary with IDF scores for query processing
     vocab_file = SPARSE_VECTORS_JSON.parent / "vocabulary.json"
-    with open(vocab_file, 'w', encoding='utf-8') as f:
-        json.dump(vocab, f, indent=2)
     
-    print(f"Saved vocabulary to {vocab_file}")
+    # Extract IDF scores from BM25 model
+    # BM25Okapi stores IDF scores in a dict: word -> idf_value
+    idf_scores = {}
+    for word, idf_value in bm25_model.idf.items():
+        if word in vocab:  # Only include words in our vocabulary
+            idf_scores[word] = float(idf_value)
+    
+    # Compute IDF statistics
+    idf_array = np.array(list(idf_scores.values()))
+    avg_idf = float(np.mean(idf_array))
+    max_idf = float(np.max(idf_array))
+    min_idf = float(np.min(idf_array))
+    std_idf = float(np.std(idf_array))
+    total_docs = len(all_tokens)
+    
+    # Save richer vocabulary format
+    vocabulary_data = {
+        "word_to_id": vocab,
+        "idf_scores": idf_scores,
+        "avg_idf": avg_idf,
+        "max_idf": max_idf,
+        "min_idf": min_idf,
+        "std_idf": std_idf,
+        "total_docs": total_docs
+    }
+    
+    with open(vocab_file, 'w', encoding='utf-8') as f:
+        json.dump(vocabulary_data, f, indent=2)
+    
+    print(f"Saved vocabulary with IDF scores to {vocab_file}")
+    
+    # Print IDF statistics
+    print(f"\nVocabulary statistics:")
+    print(f"   Vocabulary size: {len(vocab)}")
+    print(f"   Average IDF: {avg_idf:.3f}")
+    print(f"   Max IDF: {max_idf:.3f}")
+    print(f"   Min IDF: {min_idf:.3f}")
+    print(f"   Std IDF: {std_idf:.3f}")
+    print(f"   Total documents: {total_docs}")
     
     # Print statistics
     print("\nSparse vector statistics:")

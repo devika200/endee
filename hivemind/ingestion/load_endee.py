@@ -102,9 +102,14 @@ class EndeeClient:
             return {"status": "success", "message": response.text}
     
     def insert_vectors(self, index_name: str, vectors: list, use_msgpack: bool = True):
-        """Insert vectors into index (MessagePack or JSON)"""
+        """Insert vectors into index with retry logic"""
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
         if use_msgpack:
-            # Use MessagePack for faster insertion
+                    # Use MessagePack for efficiency
             headers = self.headers.copy()
             headers["Content-Type"] = "application/msgpack"
             data = msgpack.packb(vectors)
@@ -116,6 +121,23 @@ class EndeeClient:
             response = self._request("POST", f"/index/{index_name}/vector/insert", json=vectors)
         
         return response
+    
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 502 and attempt < max_retries - 1:
+                    print(f"   502 Bad Gateway, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"   Error {e}, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    raise
     
     def get_index_info(self, index_name: str):
         """Get index statistics"""
