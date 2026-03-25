@@ -1,6 +1,6 @@
-## 🚀 HiveMind — ML Internship Project (Built on Endee)
+## 🚀 HiveMind — ML RAG System (Built on Endee)
 
-This fork contains my internship project **HiveMind**, a production-grade RAG system over 10,000 arXiv ML papers, built using Endee as the vector database.
+This fork contains my internship project **HiveMind**, an AI research assistant with novel IDF-aware routing over 10,000+ arXiv ML papers, built on Endee vector database with comprehensive evaluation.
 
 📁 Project folder: [`/hivemind`](./hivemind)
 
