@@ -1,3 +1,20 @@
+## 🚀 HiveMind — ML RAG System (Built on Endee)
+
+This fork contains my internship project **HiveMind**, an AI research assistant with novel IDF-aware routing over 10,000+ arXiv ML papers, built on Endee vector database with comprehensive evaluation.
+
+📁 Project folder: [`/hivemind`](./hivemind)
+
+👉 See the [HiveMind README](./hivemind/README.md) for full project details, system design, setup instructions, and evaluation results.
+
+### Key Highlights
+- **Novel IDF-aware query routing**: +18.4% recall improvement over fixed-weight hybrid search
+- **Comprehensive evaluation**: 7 configurations tested with rigorous methodology
+- **Production-ready**: 7,697 arXiv papers indexed, working Streamlit UI
+- **Deep Endee integration**: Demonstrates hybrid search, quantization, filtering, MessagePack batching, and more
+
+---
+
+
 <p align="center">
   <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
