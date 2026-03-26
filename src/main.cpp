@@ -227,27 +227,32 @@ bool file_exists(const std::string& path) {
 
 int main(int argc, char** argv) {
 
+    const std::string settings_error = settings::validateSettings();
+    if(!settings_error.empty()) {
+        LOG_ERROR(1065, "Server startup aborted: " << settings_error);
+        return 1;
+    }
+
     if(!is_cpu_compatible()) {
         LOG_ERROR(1004, "CPU is not compatible; server startup aborted");
         return 0;
     }
+
     LOG_INFO("SERVER_ID: " << settings::SERVER_ID);
     LOG_INFO("SERVER_PORT: " << settings::SERVER_PORT);
     LOG_INFO("DATA_DIR: " << settings::DATA_DIR);
     LOG_INFO("NUM_PARALLEL_INSERTS: " << settings::NUM_PARALLEL_INSERTS);
     LOG_INFO("NUM_RECOVERY_THREADS: " << settings::NUM_RECOVERY_THREADS);
-    LOG_INFO("MAX_MEMORY_GB: " << settings::MAX_MEMORY_GB);
     LOG_INFO("ENABLE_DEBUG_LOG: " << settings::ENABLE_DEBUG_LOG);
     LOG_INFO("AUTH_TOKEN: " << settings::AUTH_TOKEN);
     LOG_INFO("AUTH_ENABLED: " << settings::AUTH_ENABLED);
     LOG_INFO("DEFAULT_USERNAME: " << settings::DEFAULT_USERNAME);
     LOG_INFO("DEFAULT_SERVER_TYPE: " << settings::DEFAULT_SERVER_TYPE);
     LOG_INFO("DEFAULT_DATA_DIR: " << settings::DEFAULT_DATA_DIR);
-    LOG_INFO("DEFAULT_MAX_ACTIVE_INDICES: " << settings::DEFAULT_MAX_ACTIVE_INDICES);
     LOG_INFO("DEFAULT_MAX_ELEMENTS: " << settings::DEFAULT_MAX_ELEMENTS);
     LOG_INFO("DEFAULT_MAX_ELEMENTS_INCREMENT: " << settings::DEFAULT_MAX_ELEMENTS_INCREMENT);
     LOG_INFO("DEFAULT_MAX_ELEMENTS_INCREMENT_TRIGGER: "
-              << settings::DEFAULT_MAX_ELEMENTS_INCREMENT_TRIGGER);
+                << settings::DEFAULT_MAX_ELEMENTS_INCREMENT_TRIGGER);
 
     // Path to React build directory
     // Get the executable's directory and resolve frontend/dist relative to it
@@ -269,7 +274,7 @@ int main(int argc, char** argv) {
     LOG_INFO(1005, "Starting the server");
     AuthManager auth_manager(data_dir);
     LOG_INFO(1006, "Created auth manager");
-    IndexManager index_manager(settings::MAX_ACTIVE_INDICES, data_dir, persistence_config);
+    IndexManager index_manager(data_dir, persistence_config);
     LOG_INFO(1007, "Created index manager");
 
     // Initialize the app
@@ -431,7 +436,7 @@ int main(int argc, char** argv) {
                     LOG_INFO(1018, index_id, "Creating index with custom size: " << size_in_millions << "M vectors");
                 }
 
-                if(body.has("sparse_dim") || body.has("sparse_scoring_model")) {
+                if(body.has("sparse_dim")) {
                     LOG_WARN(1019,
                              index_id,
                              "Create-index request used legacy sparse fields");
